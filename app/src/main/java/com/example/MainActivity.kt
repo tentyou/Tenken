@@ -62,6 +62,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.example.data.InventoryConstants
+import com.example.data.InventoryTemplate
 import com.example.data.StockItem
 import com.example.ui.StockViewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -125,7 +127,8 @@ fun DashboardScreen(viewModel: StockViewModel) {
     val isWatermarking by viewModel.isWatermarking.collectAsStateWithLifecycle()
 
     val currentProject = allProjects.find { it.id == activeProjectId }
-    val currentProjectName = currentProject?.name ?: "默认项目"
+    val currentProjectName = currentProject?.name ?: InventoryConstants.DEFAULT_PROJECT_NAME
+    val currentTemplateHeadersJson by rememberUpdatedState(currentProject?.columnHeadersJson)
 
     var showClearConfirmDialog by remember { mutableStateOf(false) }
     var showAddProjectDialog by remember { mutableStateOf(false) }
@@ -143,7 +146,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
     // Tab Index: 0 = 待盘点设备 (Only shouldCheck == true), 1 = 台账管理 (All items with shouldCheck toggles)
     var activeTab by remember { mutableStateOf(0) }
 
-    // Document Import Launcher supporting CSV & XLSX
+    // Document Import Launcher. XLSX is the primary import format; CSV is kept for compatibility.
     val documentImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -152,17 +155,16 @@ fun DashboardScreen(viewModel: StockViewModel) {
         }
     }
 
-    // CSV Template Export Launcher
-    val csvTemplateLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/csv")
+    // XLSX Template Export Launcher
+    val xlsxTemplateLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(InventoryTemplate.XLSX_MIME_TYPE)
     ) { uri ->
         if (uri != null) {
             try {
                 context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                    val csvContent = "\uFEFF序号,设备编号,设备名称,资产分类,规格型号,生产厂家,计量单位,数量,存放位置,购置日期,启用日期,账面原值,账面净值,是否盘点,备注,UUID\n"
-                    outputStream.write(csvContent.toByteArray(Charsets.UTF_8))
+                    outputStream.write(InventoryTemplate.createXlsxBytes(currentTemplateHeadersJson))
                 }
-                Toast.makeText(context, "盘点表模板保存成功！", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "盘点表模板已保存。", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(context, "保存模板失败：${e.message}", Toast.LENGTH_LONG).show()
             }
@@ -176,9 +178,9 @@ fun DashboardScreen(viewModel: StockViewModel) {
         if (uri != null) {
             viewModel.exportToZip(uri) { success ->
                 if (success) {
-                    Toast.makeText(context, "归档 ZIP 压缩包已成功保存！", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "项目资料包已保存。", Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(context, "导出 ZIP 失败，请确保至少有一项数据且已被拍摄！", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "导出失败，请确认项目内已有资产记录及现场照片。", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -188,7 +190,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
     val backgroundMessage by viewModel.backgroundPdfMessage.collectAsStateWithLifecycle()
     if (backgroundMessage != null) {
         androidx.compose.runtime.LaunchedEffect(backgroundMessage) {
-            Toast.makeText(context, backgroundMessage ?: "PDF 合并生成成功！", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, backgroundMessage ?: "资产记录 PDF 已生成。", Toast.LENGTH_LONG).show()
             viewModel.dismissBackgroundPdfMessage()
         }
     }
@@ -203,7 +205,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 8.dp))
-                    Text("底账资产数据导入配置 Mapping", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text("资产台账导入设置", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                 }
             },
             text = {
@@ -213,7 +215,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
                 ) {
-                    Text("1. 请选择导入关联的目标分类项目:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    Text("1. 选择导入目标项目", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         allProjects.forEach { proj ->
@@ -245,7 +247,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
 
                     HorizontalDivider()
 
-                    Text("2. 请选择数据注入并解析的模式:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    Text("2. 选择导入方式", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -263,7 +265,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                 horizontalArrangement = Arrangement.Center
                             ) {
                                 RadioButton(selected = !replaceMode, onClick = { replaceMode = false })
-                                Text("追加单据", style = MaterialTheme.typography.bodyMedium)
+                                Text("追加记录", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                         
@@ -280,7 +282,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                 horizontalArrangement = Arrangement.Center
                             ) {
                                 RadioButton(selected = replaceMode, onClick = { replaceMode = true })
-                                Text("覆写替换", style = MaterialTheme.typography.bodyMedium)
+                                Text("替换现有台账", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }
@@ -293,7 +295,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                         ) {
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Text(
-                                    "⚠️ 覆写将替换该特定项目的当前清单！在覆盖替换后，不再新资产列表中的旧照片与 PDF 生成清册将被自动离线物理删除。请建议必要时做好备份，虽然非强制要求。",
+                                    "替换模式将删除当前项目已有资产记录及其关联照片、PDF 文件。执行前请确认已完成必要备份。",
                                     color = MaterialTheme.colorScheme.error,
                                     fontSize = 11.sp,
                                     lineHeight = 16.sp
@@ -309,9 +311,9 @@ fun DashboardScreen(viewModel: StockViewModel) {
                         val uri = pendingImportUri!!
                         viewModel.importFile(uri, selectedImportProjId, replaceMode) { success ->
                             if (success) {
-                                Toast.makeText(context, "数据导入映射匹配成功！", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "资产台账已导入。", Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(context, "直接导入失败，请核实文件列名与是否拥有布尔点检列", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "导入失败，请核对模板表头及是否盘点列。", Toast.LENGTH_LONG).show()
                             }
                         }
                         pendingImportUri = null
@@ -391,12 +393,12 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column {
                                         Text(
-                                            text = "无线传单 HTTP 传送",
+                                            text = "局域网资料传输",
                                             style = MaterialTheme.typography.bodySmall,
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = if (wifiEnabled) "服务器开启中..." else "电脑输入网址传送导入",
+                                            text = if (wifiEnabled) "局域网传输已开启" else "电脑端访问地址导入",
                                             fontSize = 10.sp,
                                             color = Color.Gray
                                         )
@@ -441,7 +443,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Text("传送端口:", fontSize = 11.sp, color = Color.Gray)
+                                    Text("传输端口:", fontSize = 11.sp, color = Color.Gray)
                                     var portInput by remember { mutableStateOf(wifiPort.toString()) }
                                     OutlinedTextField(
                                         value = portInput,
@@ -631,13 +633,13 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                                 val freshIp = viewModel.deviceIpAddress.value ?: "127.0.0.1"
                                                 Toast.makeText(
                                                     context,
-                                                    "WiFi传送端口地址: http://${freshIp}:${wifiPort}",
+                                                    "局域网传输地址：http://${freshIp}:${wifiPort}",
                                                     Toast.LENGTH_LONG
                                                 ).show()
                                             } else {
                                                 Toast.makeText(
                                                     context,
-                                                    "WiFi传送服务已关闭",
+                                                    "局域网传输服务已关闭。",
                                                     Toast.LENGTH_SHORT
                                                 ).show()
                                             }
@@ -726,14 +728,14 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
-                                    text = "尚未创设任何分类项目",
+                                    text = "尚未创建任何评估项目",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "系统提示：请新建一个分类项目，或在无线端或左侧菜单栏添加新项目，以启用点检盘点功能。",
+                                    text = "请先新建资产评估项目，或通过局域网端添加项目后导入资产台账。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center,
@@ -774,7 +776,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                         StatsCategoryCard(
                             onImportClick = { documentImportLauncher.launch(arrayOf("*/*")) },
                             onTemplateClick = {
-                                csvTemplateLauncher.launch("盘点表模板.csv")
+                                xlsxTemplateLauncher.launch("盘点表模板.xlsx")
                             }
                         )
                         Spacer(modifier = Modifier.height(10.dp))
@@ -820,16 +822,16 @@ fun DashboardScreen(viewModel: StockViewModel) {
 
                                     val baseDateVal = currentProject?.baseDate ?: "未设定"
                                     val companyVal = currentProject?.companyName ?: "未设定"
-                                    val rTypeVal = currentProject?.reportType ?: "评估报告"
+                                    val rTypeVal = currentProject?.reportType ?: InventoryConstants.REPORT_TYPE_EVALUATION
 
                                     Text(
-                                        text = "📅 评估基准日: $baseDateVal",
+                                        text = "评估基准日：$baseDateVal",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.padding(vertical = 2.dp)
                                     )
                                     Text(
-                                        text = "🏢 持有单位: $companyVal",
+                                        text = "产权持有单位：$companyVal",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.padding(vertical = 2.dp),
@@ -837,7 +839,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "📝 报告类型: $rTypeVal",
+                                        text = "报告类型：$rTypeVal",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.padding(vertical = 2.dp)
@@ -930,12 +932,12 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "为「${activeProject?.name ?: "默认项目"}」启用自动水印",
+                                            text = "为「${activeProject?.name ?: InventoryConstants.DEFAULT_PROJECT_NAME}」启用自动水印",
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = "包含右上角分类序号标签与左下角实勘定位存证，关闭则转换为无水印纯净PDF",
+                                            text = "启用后在照片 PDF 中记录资产分类编号及现场核验信息；关闭后生成不含水印信息的 PDF。",
                                             fontSize = 11.sp,
                                             color = Color.Gray,
                                             lineHeight = 15.sp,
@@ -1157,13 +1159,13 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                         Icon(Icons.Default.AssignmentLate, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(36.dp))
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text(
-                                            text = "本分类项目当前暂无激活点检任务",
+                                            text = "当前项目暂无待盘点资产",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.Gray
                                         )
                                         Text(
-                                            text = "请切换至「全部台账管理」选项卡勾选要点检盘点的设备，或导入外部台账。",
+                                            text = "可在「全部台账管理」中勾选需盘点资产，或导入资产台账。",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = Color.LightGray,
                                             textAlign = TextAlign.Center,
@@ -1209,7 +1211,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                     if (isBaseDateEmpty || isCompanyNameEmpty) {
                                         android.widget.Toast.makeText(
                                             context,
-                                            "⚠️ 导出失败：评估基准日和持有单位不能为空，请先在“设置信息”中填写！",
+                                            "导出失败：请先在“设置信息”中填写评估基准日和产权持有单位。",
                                             android.widget.Toast.LENGTH_LONG
                                         ).show()
                                     } else {
@@ -1265,7 +1267,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
-                                    text = if (isImporting) "正在读取导入盘点清单并初始化本地 SQLite 库..." else "正在归并生成各资产 PDF 并压缩打包 ZIP 档案...",
+                                    text = if (isImporting) "正在读取资产台账并写入本地数据库..." else "正在生成资产记录 PDF 并整理项目资料包...",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
                                     textAlign = TextAlign.Center,
@@ -1284,7 +1286,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog = false },
             title = { Text(text = "清空全部数据？") },
-            text = { Text(text = "系统将删除 SQLite 中的全部盘点表，同时删除本地缓存中的所有原片及已生成的项目 PDF 档案！此动作不可撤销。") },
+            text = { Text(text = "系统将删除全部资产台账记录，并清理本地照片及已生成的 PDF 文件。此操作不可撤销。") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -1311,15 +1313,15 @@ fun DashboardScreen(viewModel: StockViewModel) {
         var selectedReportTypeOption by remember {
             mutableStateOf(
                 when (currentProject?.reportType) {
-                    "评估报告", "咨询报告" -> currentProject.reportType
-                    null, "" -> "评估报告"
+                    InventoryConstants.REPORT_TYPE_EVALUATION, InventoryConstants.REPORT_TYPE_CONSULTING -> currentProject.reportType
+                    null, "" -> InventoryConstants.REPORT_TYPE_EVALUATION
                     else -> "自定义"
                 }
             )
         }
         var customReportTypeState by remember {
             mutableStateOf(
-                if (currentProject?.reportType == "评估报告" || currentProject?.reportType == "咨询报告" || currentProject?.reportType.isNullOrEmpty()) ""
+                if (currentProject?.reportType == InventoryConstants.REPORT_TYPE_EVALUATION || currentProject?.reportType == InventoryConstants.REPORT_TYPE_CONSULTING || currentProject?.reportType.isNullOrEmpty()) ""
                 else currentProject?.reportType ?: ""
             )
         }
@@ -1421,7 +1423,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                     )
 
                     Column {
-                        listOf("评估报告", "咨询报告", "自定义").forEach { option ->
+                        listOf(InventoryConstants.REPORT_TYPE_EVALUATION, InventoryConstants.REPORT_TYPE_CONSULTING, "自定义").forEach { option ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -1448,7 +1450,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                             value = customReportTypeState,
                             onValueChange = { customReportTypeState = it },
                             label = { Text("输入自定义分类名称", fontSize = 11.sp) },
-                            placeholder = { Text("如：内审点检报告", color = Color.Gray, fontSize = 11.sp) },
+                            placeholder = { Text("如：资产核查报告", color = Color.Gray, fontSize = 11.sp) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp)
@@ -1487,7 +1489,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
     if (showAddProjectDialog) {
         var baseDateState by remember { mutableStateOf("") }
         var companyNameState by remember { mutableStateOf("") }
-        var selectedReportTypeOption by remember { mutableStateOf("评估报告") }
+        var selectedReportTypeOption by remember { mutableStateOf(InventoryConstants.REPORT_TYPE_EVALUATION) }
         var customReportTypeState by remember { mutableStateOf("") }
 
         val context = LocalContext.current
@@ -1518,7 +1520,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("创设新评估项目", fontWeight = FontWeight.Bold)
+                    Text("创建评估项目", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
@@ -1570,7 +1572,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                     )
 
                     Column {
-                        listOf("评估报告", "咨询报告", "自定义").forEach { option ->
+                        listOf(InventoryConstants.REPORT_TYPE_EVALUATION, InventoryConstants.REPORT_TYPE_CONSULTING, "自定义").forEach { option ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -1596,7 +1598,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                             value = customReportTypeState,
                             onValueChange = { customReportTypeState = it },
                             label = { Text("输入自定义分类名称", fontSize = 11.sp) },
-                            placeholder = { Text("如：内审点检报告", color = Color.Gray, fontSize = 11.sp) },
+                            placeholder = { Text("如：资产核查报告", color = Color.Gray, fontSize = 11.sp) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp),
@@ -1625,7 +1627,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                     onClick = {
                         val digits = baseDateState.filter { it.isDigit() }
                         if (baseDateState.isEmpty() || companyNameState.trim().isEmpty() || (selectedReportTypeOption == "自定义" && customReportTypeState.trim().isEmpty())) {
-                            Toast.makeText(context, "请补齐所有必填的分类参数信息后再进行创设！", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "请填写项目必填信息后再创建。", Toast.LENGTH_LONG).show()
                         } else {
                             val finalReportType = if (selectedReportTypeOption == "自定义") {
                                 customReportTypeState.trim()
@@ -1643,7 +1645,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                         }
                     }
                 ) {
-                    Text("创设项目")
+                    Text("创建项目")
                 }
             },
             dismissButton = {
@@ -1668,9 +1670,9 @@ fun DashboardScreen(viewModel: StockViewModel) {
             text = {
                 Text(
                     text = if (targetState) {
-                        "开启后，系统将自动对所有已生成的 PDF 照片应用右上角「前缀-编号」红色水印。该过程将重新生成您所有的 PDF 报告，请耐心等待。"
+                        "开启后，系统将为已生成的 PDF 照片补充资产分类编号及现场核验信息，并重新生成相关 PDF。"
                     } else {
-                        "关闭后，系统将重新生成您所有的 PDF 报告并彻底移除其中的水印标识。该过程需要短暂时间运作，请先确认。"
+                        "关闭后，系统将重新生成相关 PDF，并移除照片中的水印标识。"
                     }
                 )
             },
@@ -1680,9 +1682,9 @@ fun DashboardScreen(viewModel: StockViewModel) {
                         showWatermarkConfirmDialog = null
                         viewModel.setWatermarkEnabled(targetState) { count ->
                             val msg = if (targetState) {
-                                "照片水印已成功附加至 $count 个已有 PDF 文件！"
+                                "已为 $count 个 PDF 文件更新照片水印。"
                             } else {
-                                "已成功清除 $count 个 PDF 文件中的照片水印！"
+                                "已从 $count 个 PDF 文件中移除照片水印。"
                             }
                             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
@@ -1725,14 +1727,14 @@ fun DashboardScreen(viewModel: StockViewModel) {
                     )
                     Spacer(modifier = Modifier.height(20.dp))
                     Text(
-                        text = "正在处理 PDF 照片水印...",
+                        text = "正在更新照片水印...",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "重新生成底册信息，请勿关闭应用",
+                        text = "正在重新生成资产记录，请勿关闭应用。",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Gray,
                         textAlign = TextAlign.Center
@@ -1789,12 +1791,12 @@ fun DashboardScreen(viewModel: StockViewModel) {
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.padding(end = 8.dp))
-                    Text("项目清扫警告", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                    Text("删除项目确认", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                 }
             },
             text = {
                 Text(
-                    text = "您正在对分类项目「${projToDelete.name}」进行彻底彻底的毁灭性清扫！\n\n警告：这将会彻底物理抹去该项目内所有的资产单据信息、关联的所有实物存证拍照及已归纳生成的 PDF 电子盘点点检单（其他不受影响）。该行为完全物理执行，绝对无法撤回！",
+                    text = "确认删除项目「${projToDelete.name}」？\n\n系统将删除该项目的资产台账记录、现场照片及已生成的 PDF 文件。其他项目不受影响。此操作不可撤销。",
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -1802,13 +1804,13 @@ fun DashboardScreen(viewModel: StockViewModel) {
                 Button(
                     onClick = {
                         viewModel.deleteProject(projToDelete) {
-                            Toast.makeText(context, "项目「${projToDelete.name}」已清空清除", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "项目「${projToDelete.name}」已删除。", Toast.LENGTH_SHORT).show()
                         }
                         showDeleteProjectDialog = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("确认清扫删除")
+                    Text("确认删除")
                 }
             },
             dismissButton = {
@@ -1861,7 +1863,7 @@ fun TutorialGuideCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "点检 · 快速上手新手指引",
+                        text = "资产盘点流程指引",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1881,7 +1883,7 @@ fun TutorialGuideCard(
             }
 
             Text(
-                text = "欢迎使用点检系统！跟随以下4步快速体验核心工作流：",
+                text = "请按以下流程完成资产台账导入、现场拍照、记录生成与资料导出。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
                 fontWeight = FontWeight.Medium
@@ -1891,31 +1893,31 @@ fun TutorialGuideCard(
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.Top) {
-                    Text("1️⃣ ", style = MaterialTheme.typography.bodyMedium)
+                    Text("1. ", style = MaterialTheme.typography.bodyMedium)
                     Column {
                         Text("点击下方按钮「加载示范数据」", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text("或通过右上角导入您自己的台账 CSV/Excel 清单文件。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("或通过右上角导入您自己的台账 Excel 清单文件。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                 }
                 Row(verticalAlignment = Alignment.Top) {
-                    Text("2️⃣ ", style = MaterialTheme.typography.bodyMedium)
+                    Text("2. ", style = MaterialTheme.typography.bodyMedium)
                     Column {
-                        Text("在下方数据列中点击「📷 相机」", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text("为该项资产拍照，或直接识别资产本身的条形码、二维码。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("在资产记录中进入拍照", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text("采集资产现场照片，必要时记录条码或二维码信息。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                 }
                 Row(verticalAlignment = Alignment.Top) {
-                    Text("3️⃣ ", style = MaterialTheme.typography.bodyMedium)
+                    Text("3. ", style = MaterialTheme.typography.bodyMedium)
                     Column {
-                        Text("完成拍照后，系统会在后台全自动编译", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text("生成专业合规的资产记录 PDF，分类编号可定制对应前缀。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("生成资产记录 PDF", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text("系统根据现场照片生成资产记录 PDF，并可按资产分类配置编号前缀。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                 }
                 Row(verticalAlignment = Alignment.Top) {
-                    Text("4️⃣ ", style = MaterialTheme.typography.bodyMedium)
+                    Text("4. ", style = MaterialTheme.typography.bodyMedium)
                     Column {
-                        Text("一键传送与无线导出", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text("开启 Wi-Fi 传单开关，电脑端浏览器扫码/直接输入地址即可轻松拖动上传新表单！", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("通过局域网导入导出资料", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text("开启局域网传输后，可在电脑端浏览器上传资产台账或下载项目资料包。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                 }
             }
@@ -1983,7 +1985,7 @@ fun StatsCategoryCard(
             modifier = Modifier
                 .weight(1f)
                 .height(48.dp)
-                .testTag("import_csv_button"),
+                .testTag("import_xlsx_button"),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary
             ),
@@ -2174,7 +2176,7 @@ fun StockItemRow(
                         TextButton(
                             onClick = onPdfClick,
                             colors = ButtonDefaults.textButtonColors(
-                                contentColor = if (item.pdfStatus == "已生成") Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary
+                                contentColor = if (item.pdfStatus == InventoryConstants.PDF_STATUS_GENERATED) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary
                             ),
                             modifier = Modifier
                                 .height(28.dp)
@@ -2182,19 +2184,19 @@ fun StockItemRow(
                             contentPadding = PaddingValues(0.dp)
                         ) {
                             Icon(
-                                imageVector = if (item.pdfStatus == "已生成") Icons.Default.PictureAsPdf else Icons.Default.Refresh,
+                                imageVector = if (item.pdfStatus == InventoryConstants.PDF_STATUS_GENERATED) Icons.Default.PictureAsPdf else Icons.Default.Refresh,
                                 contentDescription = "PDF",
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (item.pdfStatus == "已生成") "合并PDF已绪" else "归并生成PDF",
+                                text = if (item.pdfStatus == InventoryConstants.PDF_STATUS_GENERATED) "合并PDF已绪" else "归并生成PDF",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
 
-                        if (item.pdfStatus == "已生成") {
+                        if (item.pdfStatus == InventoryConstants.PDF_STATUS_GENERATED) {
                             var showPdfPreview by remember { mutableStateOf(false) }
 
                             TextButton(
@@ -2353,7 +2355,7 @@ fun EmptyStateView(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "工作提示：请导入底账资产数据表格进行点检盘点。",
+                text = "请导入资产台账表格后开展现场盘点。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -2451,7 +2453,7 @@ fun CameraPermissionDeniedWidget(onRequestClick: () -> Unit, onBackClick: () -> 
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "连续拍照盘点功能必须使用手机相机物理采集镜头。程序不会未经授权读取您的其他数据保护隐私，请授权开启相机工作权限。",
+                text = "现场照片采集需要使用手机相机权限。应用仅在拍照流程中调用相机。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.LightGray,
                 textAlign = TextAlign.Center,
@@ -2723,7 +2725,7 @@ fun CameraPreviewWidget(viewModel: StockViewModel, activeItem: StockItem) {
             ) {
                 Text(
                     text = if (sessionPhotos.isEmpty()) {
-                        "提示：按白色内环快门可以连拍多张实物图，最后点完成即合并PDF！"
+                        "提示：可连续采集多张现场照片，完成后生成资产记录 PDF。"
                     } else {
                         "已拍摄 ${sessionPhotos.size} 张多角度物理卡片"
                     },
@@ -2754,7 +2756,7 @@ fun CameraPreviewWidget(viewModel: StockViewModel, activeItem: StockItem) {
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "云测试/无硬件？一键模拟实物拍照存证", 
+                        text = "生成模拟现场照片记录", 
                         fontSize = 11.sp, 
                         color = Color.White,
                         fontWeight = FontWeight.Bold
@@ -2789,7 +2791,7 @@ fun CameraPreviewWidget(viewModel: StockViewModel, activeItem: StockItem) {
                             val imgCapture = imageCapture
                             if (imgCapture == null) {
                                 Toast
-                                    .makeText(context, "相机还未完全就绪，请稍后...", Toast.LENGTH_SHORT)
+                                    .makeText(context, "相机正在初始化，请稍候。", Toast.LENGTH_SHORT)
                                     .show()
                                 return@clickable
                             }
@@ -2831,7 +2833,7 @@ fun CameraPreviewWidget(viewModel: StockViewModel, activeItem: StockItem) {
                                         Toast
                                             .makeText(
                                                 context,
-                                                "拍图失败，请检验硬件支持：${exception.message}",
+                                                "照片采集失败，请检查相机权限或设备状态：${exception.message}",
                                                 Toast.LENGTH_LONG
                                             )
                                             .show()
@@ -2854,7 +2856,7 @@ fun CameraPreviewWidget(viewModel: StockViewModel, activeItem: StockItem) {
                 Button(
                     onClick = {
                         viewModel.endPhotoCapture {
-                            Toast.makeText(context, "后台拼合中，已即刻返回。拼合成功后将弹窗提示", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "正在生成资产记录 PDF，完成后将提示。", Toast.LENGTH_SHORT).show()
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -3021,7 +3023,7 @@ fun DocumentEnhancingDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "📷 实时叠加实地勘测水印",
+                                text = "现场核验水印",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -3174,7 +3176,7 @@ fun WatermarkSettingsPage(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "当前项目: ${activeProject?.name ?: "默认项目"}",
+                            text = "当前项目: ${activeProject?.name ?: InventoryConstants.DEFAULT_PROJECT_NAME}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -3248,7 +3250,7 @@ fun WatermarkSettingsPage(
                                     fontSize = 15.sp
                                 )
                                 Text(
-                                    text = "实时开关：关闭自动转换为无水印纯净版PDF，开启自动附加物理实勘定位",
+                                    text = "关闭后生成不含水印信息的 PDF；开启后记录现场核验信息。",
                                     fontSize = 11.sp,
                                     color = Color.Gray,
                                     lineHeight = 15.sp,
@@ -3322,7 +3324,7 @@ fun WatermarkSettingsPage(
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 Text(
-                                    text = "📋 资产分类编号前缀对应表 (可编辑字段):",
+                                    text = "资产分类编号前缀对照表（可编辑）",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
@@ -3520,7 +3522,7 @@ fun WatermarkSettingsPage(
                                     }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "为满足金融行业严格的现场实勘审计和存证合规要求，系统的拍摄日期时间、经纬度坐标与物理位置说明均将全自动、非对称解密地直接从设备硬件GPS模块 and 照片原始物理元数据流（EXIF）中采集提取，排除任何人性的填写漏洞和数据篡改空间。",
+                                        text = "系统可根据设备定位信息和照片 EXIF 元数据记录拍摄日期、时间、经纬度及参考位置，用于辅助现场核验记录。",
                                         fontSize = 11.sp,
                                         lineHeight = 15.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -3534,7 +3536,7 @@ fun WatermarkSettingsPage(
                 // Widget 4: Dynamic preview mockup render
                 item {
                     Text(
-                        text = "🔍 专属水印效果实时预览",
+                        text = "水印效果预览",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3660,7 +3662,7 @@ fun WatermarkSettingsPage(
                             fontSize = 14.sp
                         )
                         Text(
-                            text = "关闭水印后生成的交付版本 PDF 将恢复为无水印纯面台账文档",
+                            text = "关闭水印后，后续生成的 PDF 将不包含照片水印信息。",
                             fontSize = 11.sp,
                             color = Color.Gray,
                             modifier = Modifier.padding(top = 4.dp)
@@ -3712,7 +3714,7 @@ fun PdfPreviewDialog(
                 }
             } catch (e: Exception) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    errorMessage = e.message ?: "解析PDF失败"
+                    errorMessage = e.message ?: "PDF 解析失败"
                 }
             }
         }
@@ -3769,7 +3771,7 @@ fun PdfPreviewDialog(
                                 CircularProgressIndicator()
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    text = "渲染中, 请稍候...",
+                                    text = "正在渲染，请稍候。",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.outline
                                 )
@@ -3895,4 +3897,3 @@ fun CollapsibleMetadataSection(
         }
     }
 }
-

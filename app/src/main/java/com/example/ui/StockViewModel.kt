@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.InventoryConstants
 import com.example.data.Project
 import com.example.data.StockItem
 import com.example.data.StockRepository
@@ -27,7 +28,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
     val allProjects: StateFlow<List<Project>>
     val activeProject: StateFlow<Project?>
     
-    private val _activeProjectId = MutableStateFlow<String>("default_project")
+    private val _activeProjectId = MutableStateFlow<String>(InventoryConstants.DEFAULT_PROJECT_ID)
     val activeProjectId = _activeProjectId.asStateFlow()
 
     val stockItems: StateFlow<List<StockItem>>
@@ -83,7 +84,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     try {
                         val allProjectItems = repository.getItemsByProjectSync(pid)
-                        val itemsWithPdf = allProjectItems.filter { it.pdfStatus == "已生成" }
+                        val itemsWithPdf = allProjectItems.filter { it.pdfStatus == InventoryConstants.PDF_STATUS_GENERATED }
                         processedCount = itemsWithPdf.size
                         for (item in itemsWithPdf) {
                             repository.generatePdfForItem(context, item)
@@ -163,7 +164,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                 
                 // Immediately update current PDFs if watermark is enabled
                 val allProjectItems = repository.getItemsByProjectSync(pid)
-                val itemsWithPdf = allProjectItems.filter { it.pdfStatus == "已生成" }
+                val itemsWithPdf = allProjectItems.filter { it.pdfStatus == InventoryConstants.PDF_STATUS_GENERATED }
                 for (item in itemsWithPdf) {
                     repository.generatePdfForItem(context, item)
                 }
@@ -182,7 +183,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                 
                 // Regenerate PDFs
                 val allProjectItems = repository.getItemsByProjectSync(pid)
-                val itemsWithPdf = allProjectItems.filter { it.pdfStatus == "已生成" }
+                val itemsWithPdf = allProjectItems.filter { it.pdfStatus == InventoryConstants.PDF_STATUS_GENERATED }
                 for (item in itemsWithPdf) {
                     repository.generatePdfForItem(context, item)
                 }
@@ -240,9 +241,9 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val existing = repository.listProjectsSync()
             if (existing.isEmpty()) {
-                val defaultProj = Project(id = "default_project", name = "默认项目")
+                val defaultProj = Project(id = InventoryConstants.DEFAULT_PROJECT_ID, name = InventoryConstants.DEFAULT_PROJECT_NAME)
                 repository.insertProject(defaultProj)
-                _activeProjectId.value = "default_project"
+                _activeProjectId.value = InventoryConstants.DEFAULT_PROJECT_ID
             } else {
                 _activeProjectId.value = existing[0].id
             }
@@ -253,7 +254,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
         _activeProjectId.value = projectId
     }
 
-    fun addProject(name: String, baseDate: String = "", companyName: String = "", reportType: String = "评估报告") {
+    fun addProject(name: String, baseDate: String = "", companyName: String = "", reportType: String = InventoryConstants.REPORT_TYPE_EVALUATION) {
         viewModelScope.launch(Dispatchers.IO) {
             val newProj = Project(
                 name = name,
@@ -332,13 +333,13 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                 if (currentPhotoCount > 0) {
                     val freshPdf = repository.generatePdfForItem(context, item)
                     if (freshPdf != null && freshPdf.exists()) {
-                        repository.updatePhotoState(item.uid, currentPhotoCount, "已生成")
-                        _backgroundPdfMessage.value = "盘点单「${item.name}」拍照拼合 PDF 完成！照片拼合生成并自动进行高质无损压缩（体积通常缩减92%以上）。"
+                        repository.updatePhotoState(item.uid, currentPhotoCount, InventoryConstants.PDF_STATUS_GENERATED)
+                        _backgroundPdfMessage.value = "资产「${item.name}」的现场照片记录 PDF 已生成。"
                     } else {
-                        repository.updatePhotoState(item.uid, currentPhotoCount, "未生成")
+                        repository.updatePhotoState(item.uid, currentPhotoCount, InventoryConstants.PDF_STATUS_PENDING)
                     }
                 } else {
-                    repository.updatePhotoState(item.uid, 0, "未生成")
+                    repository.updatePhotoState(item.uid, 0, InventoryConstants.PDF_STATUS_PENDING)
                 }
             }
         } else {
@@ -357,7 +358,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
             repository.applyImageFilter(file, filterType)
             withContext(Dispatchers.Main) {
                 refreshActiveSessionPhotos(activeItem.uid)
-                Toast.makeText(context, "滤镜渲染与黑白防噪美化处理生效！", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "图像处理已应用。", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -383,9 +384,9 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             File(context.filesDir, "pdfs/${item.uid}").deleteRecursively()
             File(context.filesDir, "photos/${item.uid}").deleteRecursively()
-            repository.updatePhotoState(item.uid, 0, "未生成")
+            repository.updatePhotoState(item.uid, 0, InventoryConstants.PDF_STATUS_PENDING)
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "已成功清除「${item.name}」的全部照片和PDF数据", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "已清除「${item.name}」的照片和 PDF 文件。", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -404,11 +405,11 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
             if (currentPhotoCount > 0) {
                 repository.generatePdfForItem(context, activeItem)
             } else {
-                repository.updatePhotoState(activeItem.uid, 0, "未生成")
+                repository.updatePhotoState(activeItem.uid, 0, InventoryConstants.PDF_STATUS_PENDING)
             }
             withContext(Dispatchers.Main) {
                 refreshActiveSessionPhotos(activeItem.uid)
-                Toast.makeText(context, "照片已删除并自适应重新连号", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "照片已删除，序号已更新。", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -424,7 +425,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                 repository.generatePdfForItem(context, activeItem)
                 withContext(Dispatchers.Main) {
                     refreshActiveSessionPhotos(activeItem.uid)
-                    Toast.makeText(context, "纸张裁剪与图像校正切边在App中生效！", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "图像裁剪已应用。", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 withContext(Dispatchers.Main) {
@@ -481,32 +482,32 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                 paint.textSize = 46f
                 paint.isAntiAlias = true
 
-                canvas.drawText("【 盘 点 资 产 現 场 实 勘 存 证 】", 80f, 180f, paint)
+                canvas.drawText("【资产现场核验记录】", 80f, 180f, paint)
 
                 paint.textSize = 36f
                 paint.color = 0xFF94A3B8.toInt()
-                canvas.drawText("核算核验状态: 物理核算真实一致", 80f, 260f, paint)
+                canvas.drawText("核验状态: 已生成模拟记录", 80f, 260f, paint)
 
                 paint.color = android.graphics.Color.WHITE
                 paint.textSize = 42f
-                canvas.drawText("物力资产名称: ${item.name}", 80f, 380f, paint)
-                canvas.drawText("实物资产编号: ${item.originalCode}", 80f, 460f, paint)
-                canvas.drawText("存放所在位置: ${item.location}", 80f, 540f, paint)
-                canvas.drawText("系统设定分类: ${item.category}", 80f, 620f, paint)
+                canvas.drawText("资产名称: ${item.name}", 80f, 380f, paint)
+                canvas.drawText("资产编号: ${item.originalCode}", 80f, 460f, paint)
+                canvas.drawText("存放位置: ${item.location}", 80f, 540f, paint)
+                canvas.drawText("资产分类: ${item.category}", 80f, 620f, paint)
 
                 paint.color = 0xFFF59E0B.toInt() // Amber accent code info
                 paint.textSize = 34f
-                canvas.drawText("系统底层 UID: ${item.uid}", 80f, 740f, paint)
+                canvas.drawText("记录编号: ${item.uid}", 80f, 740f, paint)
 
                 paint.textSize = 32f
                 paint.color = 0xFF10B981.toInt() // Emerald accent time format
                 val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
                 val timestampStr = sdf.format(java.util.Date())
-                canvas.drawText("数字签章时间戳: $timestampStr", 80f, 820f, paint)
+                canvas.drawText("记录生成时间: $timestampStr", 80f, 820f, paint)
 
                 paint.textSize = 28f
                 paint.color = 0xFF64748B.toInt()
-                canvas.drawText("AI Studio Built in Remote Emulator Simulation", 80f, 920f, paint)
+                canvas.drawText("模拟照片记录", 80f, 920f, paint)
 
                 FileOutputStream(targetFile).use { out ->
                     bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
@@ -606,14 +607,14 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                         selectProject(projId)
                         val proj = repository.getProjectById(projId)
                         if (proj != null) {
-                            Toast.makeText(context, "局域网传送：已同步并选用分类项目「${proj.name}」！", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "已切换至项目「${proj.name}」。", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
             ) { success, count ->
                 if (success) {
                     viewModelScope.launch(Dispatchers.Main) {
-                        Toast.makeText(context, "通过局域网无线成功导入「$count」条外部资产单据！", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "已通过局域网导入 $count 条资产记录。", Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -706,7 +707,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
             val freshPdf = repository.generatePdfForItem(context, item)
             withContext(Dispatchers.Main) {
                 if (freshPdf != null && freshPdf.exists()) {
-                    Toast.makeText(context, "PDF 合并生成成功！", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "资产记录 PDF 已生成。", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(context, "生成 PDF 失败（请先拍照）", Toast.LENGTH_SHORT).show()
                 }
@@ -718,11 +719,11 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
         var pid = _activeProjectId.value
         viewModelScope.launch(Dispatchers.IO) {
             if (pid.isEmpty()) {
-                val defaultProj = Project(id = "default_project", name = "默认项目")
+                val defaultProj = Project(id = InventoryConstants.DEFAULT_PROJECT_ID, name = InventoryConstants.DEFAULT_PROJECT_NAME)
                 repository.insertProject(defaultProj)
-                pid = "default_project"
+                pid = InventoryConstants.DEFAULT_PROJECT_ID
                 withContext(Dispatchers.Main) {
-                    _activeProjectId.value = "default_project"
+                    _activeProjectId.value = InventoryConstants.DEFAULT_PROJECT_ID
                 }
             }
 

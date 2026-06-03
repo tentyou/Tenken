@@ -79,7 +79,7 @@ class StockRepository(
         try {
             val project = kotlinx.coroutines.runBlocking {
                 projectDao.getProjectById(projectId)
-            } ?: Project(id = projectId, name = "默认项目")
+            } ?: Project(id = projectId, name = InventoryConstants.DEFAULT_PROJECT_NAME)
 
             val wb = XSSFWorkbook()
 
@@ -242,7 +242,7 @@ class StockRepository(
                 val r3 = sheet.createRow(3)
                 r3.heightInPoints = 20f
                 val c3Left = r3.createCell(0)
-                val unitLabel = if (project.reportType == "评估报告") "被评估单位" else "产权持有单位"
+                val unitLabel = if (project.reportType == InventoryConstants.REPORT_TYPE_EVALUATION) "被评估单位" else "产权持有单位"
                 val companyNameText = if (project.companyName.isNotEmpty()) project.companyName else "未指定代评单位"
                 c3Left.setCellValue("$unitLabel：$companyNameText")
                 c3Left.cellStyle = styleLabelLeft
@@ -295,7 +295,7 @@ class StockRepository(
                         if (headerName == "序号") {
                             rawStr = (itemIdx + 1).toString()
                         } else if (headerName == "备注") {
-                            rawStr = if (shouldPutCheckmark) "✔" else ""
+                            rawStr = if (shouldPutCheckmark) "已盘点" else ""
                         } else {
                             val originalKey = baseHeaderCells.find { originalHeader ->
                                 val trimmed = originalHeader.trim()
@@ -354,7 +354,7 @@ class StockRepository(
                             break
                         }
                     }
-                    if (allEmpty && headerName != "序号" && headerName != "设备编号" && headerName != "设备名称") {
+                    if (allEmpty && headerName != "序号" && headerName != "设备编号" && headerName != "设备名称" && headerName != "备注") {
                         sheet.setColumnHidden(col, true)
                     }
                 }
@@ -562,7 +562,7 @@ class StockRepository(
                             location = itemLoc,
                             originalCode = itemCode,
                             photoCount = 0,
-                            pdfStatus = "未生成",
+                            pdfStatus = InventoryConstants.PDF_STATUS_PENDING,
                             projectId = projectId,
                             shouldCheck = isCheck,
                             originalRowJson = toJsonList(cells),
@@ -780,7 +780,7 @@ class StockRepository(
                         location = itemLoc,
                         originalCode = itemCode,
                         photoCount = 0,
-                        pdfStatus = "未生成",
+                        pdfStatus = InventoryConstants.PDF_STATUS_PENDING,
                         projectId = projectId,
                         shouldCheck = isCheck,
                         originalRowJson = originalRowJsonStr,
@@ -864,7 +864,7 @@ class StockRepository(
         }?.sortedBy { it.name }
 
         if (imageFiles.isNullOrEmpty()) {
-            updatePhotoState(item.uid, 0, "未生成")
+            updatePhotoState(item.uid, 0, InventoryConstants.PDF_STATUS_PENDING)
             return@withContext null
         }
 
@@ -876,7 +876,7 @@ class StockRepository(
 
         val pdfDocument = PdfDocument()
         try {
-            val project = projectDao.getProjectById(item.projectId) ?: Project(id = item.projectId, name = "默认项目")
+            val project = projectDao.getProjectById(item.projectId) ?: Project(id = item.projectId, name = InventoryConstants.DEFAULT_PROJECT_NAME)
             val isWatermarkEnabled = project.watermarkEnabled
             val watermarkText = if (isWatermarkEnabled && project.watermarkTrEnabled) {
                 val prefix = getCategoryPrefix(context, item.category)
@@ -1005,7 +1005,7 @@ class StockRepository(
             }
             
             // Update SQLite Room records
-            updatePhotoState(item.uid, imageFiles.size, "已生成")
+            updatePhotoState(item.uid, imageFiles.size, InventoryConstants.PDF_STATUS_GENERATED)
             return@withContext pdfFile
         } catch (e: Exception) {
             e.printStackTrace()
@@ -1328,7 +1328,7 @@ class StockRepository(
 
                 // Append the index Excel workbook "盘点表.xlsx" straight at the ZIP root folder
                 val tempXlsxFile = File(context.cacheDir, "temp_export_${UUID.randomUUID()}.xlsx")
-                val pId = items.firstOrNull()?.projectId ?: "default_project"
+                val pId = items.firstOrNull()?.projectId ?: InventoryConstants.DEFAULT_PROJECT_ID
                 generateXlsxReport(context, pId, items, tempXlsxFile)
                 if (tempXlsxFile.exists()) {
                     val proj = getProjectById(pId)

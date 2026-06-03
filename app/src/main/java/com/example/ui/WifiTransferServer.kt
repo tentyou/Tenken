@@ -1,6 +1,10 @@
 package com.example.ui
 
 import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.PowerManager
+import com.example.data.InventoryConstants
+import com.example.data.InventoryTemplate
 import com.example.data.StockRepository
 import com.example.data.Project
 import java.io.BufferedReader
@@ -40,10 +44,13 @@ class WifiTransferServer(
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
     private var serverThread: Thread? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     fun start(port: Int = 8080) {
         if (isRunning) return
         isRunning = true
+        acquireTransferLocks()
         serverThread = Thread {
             try {
                 serverSocket = ServerSocket(port)
@@ -55,6 +62,10 @@ class WifiTransferServer(
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                if (isRunning) {
+                    isRunning = false
+                    releaseTransferLocks()
+                }
             }
         }.apply { start() }
     }
@@ -68,6 +79,53 @@ class WifiTransferServer(
         }
         serverSocket = null
         serverThread = null
+        releaseTransferLocks()
+    }
+
+    private fun acquireTransferLocks() {
+        try {
+            val powerManager = context.applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "Tenken:WifiTransferServer"
+            ).apply {
+                setReferenceCounted(false)
+                if (!isHeld) acquire()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = wifiManager.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "Tenken:WifiTransferServer"
+            ).apply {
+                setReferenceCounted(false)
+                if (!isHeld) acquire()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releaseTransferLocks() {
+        try {
+            wakeLock?.takeIf { it.isHeld }?.release()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            wakeLock = null
+        }
+
+        try {
+            wifiLock?.takeIf { it.isHeld }?.release()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            wifiLock = null
+        }
     }
 
     private fun handleClient(socket: Socket) {
@@ -81,7 +139,7 @@ class WifiTransferServer(
             val method = parts[0]
             val pathWithQuery = parts[1]
             
-            var filename = "upload.csv"
+            var filename = "upload.xlsx"
             var queryProjectId = ""
             var queryMode = "append" // append or replace
 
@@ -142,67 +200,12 @@ class WifiTransferServer(
                 val project = kotlinx.coroutines.runBlocking {
                     repository.getProjectById(queryProjectId)
                 }
-                val projectName = project?.name ?: "默认项目"
-                
-                val standardHeaderSequence = listOf(
-                    "序号", "设备编号", "设备名称", "规格型号", "生产厂家", "计量单位", "数量",
-                    "购置日期", "启用日期", "账面原值", "账面净值", "是否盘点", "备注", "资产分类"
-                )
-                
-                val extraHeaders = mutableListOf<String>()
-                if (project != null && project.columnHeadersJson.isNotEmpty()) {
-                    try {
-                        val existingHeaders = repository.fromJsonList(project.columnHeadersJson)
-                        for (h in existingHeaders) {
-                            val hTrim = h.trim()
-                            if (hTrim.isEmpty()) continue
-                            if (hTrim.equals("uuid", ignoreCase = true) || hTrim.equals("uid", ignoreCase = true)) continue
-                            
-                            val isStandard = standardHeaderSequence.any { standard ->
-                                standard == hTrim || hTrim.contains(standard) || standard.contains(hTrim)
-                            }
-                            if (!isStandard) {
-                                extraHeaders.add(hTrim)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
-                val templateHeaders = standardHeaderSequence + extraHeaders
-                
-                // Build POI Excel workbook
-                val wb = org.apache.poi.xssf.usermodel.XSSFWorkbook()
-                val sheet = wb.createSheet("盘点模板")
-                sheet.setDisplayGridlines(true)
-                
-                val headerRow = sheet.createRow(0)
-                val headerFont = wb.createFont().apply {
-                    bold = true
-                }
-                val headerStyle = wb.createCellStyle().apply {
-                    setFont(headerFont)
-                    alignment = org.apache.poi.ss.usermodel.HorizontalAlignment.CENTER
-                    verticalAlignment = org.apache.poi.ss.usermodel.VerticalAlignment.CENTER
-                }
-                
-                for (i in templateHeaders.indices) {
-                    val cell = headerRow.createCell(i)
-                    cell.setCellValue(templateHeaders[i])
-                    cell.cellStyle = headerStyle
-                    sheet.setColumnWidth(i, 15 * 256)
-                }
-                
-                // Create only the header row, no sample data rows are added to avoid clutter.
-                
-                val bos = ByteArrayOutputStream()
-                wb.write(bos)
-                wb.close()
-                val xlsxBytes = bos.toByteArray()
+                val projectName = project?.name ?: InventoryConstants.DEFAULT_PROJECT_NAME
+                val xlsxBytes = InventoryTemplate.createXlsxBytes(project?.columnHeadersJson)
                 
                 val safeFilename = URLEncoder.encode("${projectName}-盘点模板.xlsx", "UTF-8").replace("+", "%20")
                 val responseHeaders = "HTTP/1.1 200 OK\r\n" +
-                        "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n" +
+                        "Content-Type: ${InventoryTemplate.XLSX_MIME_TYPE}\r\n" +
                         "Content-Disposition: attachment; filename*=UTF-8''$safeFilename\r\n" +
                         "Content-Length: ${xlsxBytes.size}\r\n" +
                         "Connection: close\r\n\r\n"
@@ -225,7 +228,7 @@ class WifiTransferServer(
                 
                 val defaultProject = kotlinx.coroutines.runBlocking {
                     val list = repository.listProjectsSync()
-                    if (list.isNotEmpty()) list[0].id else "default_project"
+                    if (list.isNotEmpty()) list[0].id else InventoryConstants.DEFAULT_PROJECT_ID
                 }
                 val targetProjId = queryProjectId.ifEmpty { defaultProject }
                 val isReplace = queryMode == "replace"
@@ -380,7 +383,7 @@ class WifiTransferServer(
                 val json = org.json.JSONObject(bodyStr)
                 val pBaseDate = json.optString("baseDate", "")
                 val pCompanyName = json.optString("companyName", "")
-                val pReportType = json.optString("reportType", "评估报告")
+                val pReportType = json.optString("reportType", InventoryConstants.REPORT_TYPE_EVALUATION)
                 var pName = json.optString("name", "")
 
                 if (pName.trim().isEmpty()) {
@@ -508,7 +511,7 @@ class WifiTransferServer(
                 }
                 val responseJson = if (project != null) {
                     if (project.baseDate.trim().isEmpty() || project.companyName.trim().isEmpty()) {
-                        "{\"success\": false, \"error\": \"生成 ZIP 失败：评估基准日和持有单位不能为空，需强制用户填写，请先在网页下方或手机App端“设置信息”中保存后重试！\"}"
+                        "{\"success\": false, \"error\": \"生成项目资料包失败：请先填写评估基准日和产权持有单位。\"}"
                     } else {
                         val items = kotlinx.coroutines.runBlocking {
                             repository.getItemsByProjectSync(queryProjectId)
@@ -521,7 +524,7 @@ class WifiTransferServer(
                             val timestampStr = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.getDefault()).format(java.util.Date())
                             "{\"success\": true, \"size\": ${destFile.length()}, \"filename\": \"${URLEncoder.encode("${project.name}-盘点表-${timestampStr}.zip", "UTF-8").replace("+", "%20")}\"}"
                         } else {
-                            "{\"success\": false, \"error\": \"生成 ZIP 失败：设备为空或照片及PDF尚未就绪\"}"
+                            "{\"success\": false, \"error\": \"生成项目资料包失败：项目暂无可导出的资产记录或 PDF 文件。\"}"
                         }
                     }
                 } else {
@@ -1169,9 +1172,9 @@ class WifiTransferServer(
                     <div class="form-group">
                       <label>载入资产台账列表</label>
                       <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
-                        <div class="icon">📁</div>
+                        <div class="icon">文件</div>
                         <div class="title">点击或拖拽表格文件到这里</div>
-                        <div class="subtitle">支持 Excel (.xlsx) 及 CSV (.csv) 格式</div>
+                        <div class="subtitle">默认使用 Excel (.xlsx)，CSV (.csv) 仅作兼容导入</div>
                         <input type="file" id="fileInput" accept=".xlsx,.csv" style="display:none" onchange="performUpload(this.files[0])">
                       </div>
                     </div>
@@ -1265,7 +1268,7 @@ class WifiTransferServer(
                   const company = document.getElementById('newProjCompany').value.trim();
                   const baseDate = document.getElementById('newProjBaseDate').value;
                   if (!company || !baseDate) {
-                    alert("请填写持有单位名称与评估基准日！");
+                    alert("请填写产权持有单位名称与评估基准日。");
                     return;
                   }
 
@@ -1293,7 +1296,7 @@ class WifiTransferServer(
                   .then(r => r.json())
                   .then(data => {
                     if (data.success) {
-                      alert("项目 [" + data.name + "] 创建并同步成功！");
+                      alert("项目 [" + data.name + "] 已创建并同步。");
                       window.location.reload();
                     } else {
                       alert("新建失败");
@@ -1306,7 +1309,7 @@ class WifiTransferServer(
 
                 function deleteProject(event, id) {
                   event.stopPropagation();
-                  if (!confirm("您确定要彻底删除该项目、及其全部清单和照片资料吗？此操作无法撤销。")) {
+                  if (!confirm("确认删除该项目及其全部台账、照片和 PDF 文件？此操作不可撤销。")) {
                     return;
                   }
 
@@ -1318,7 +1321,7 @@ class WifiTransferServer(
                   .then(r => r.json())
                   .then(data => {
                     if (data.success) {
-                      alert("项目已成功删除。");
+                      alert("项目已删除。");
                       window.location.reload();
                     } else {
                       alert("删除失败");
@@ -1384,7 +1387,7 @@ class WifiTransferServer(
                   const metaStatus = document.getElementById('metaStatus');
                   metaStatus.style.display = 'block';
                   metaStatus.style.color = '#38bdf8';
-                  metaStatus.innerText = "正在保存参数设定到手机...";
+                  metaStatus.innerText = "正在保存项目参数...";
 
                   const dateDigits = baseDateVal.replace(/-/g, '');
                   const updatedName = companyName + "-" + dateDigits;
@@ -1404,13 +1407,13 @@ class WifiTransferServer(
                   .then(data => {
                     if (data.success) {
                       metaStatus.style.color = '#34d399';
-                      metaStatus.innerText = "设置已同步，项目更名为：" + updatedName;
+                      metaStatus.innerText = "项目参数已保存，项目名称更新为：" + updatedName;
                       const actItem = document.getElementById('item_' + sel.value);
                       if (actItem) {
                         const nameEl = actItem.querySelector('.proj-name');
                         if (nameEl) nameEl.innerText = updatedName;
                         const metaEl = actItem.querySelector('.proj-meta');
-                        if (metaEl) metaEl.innerText = "📅 " + baseDate + " | 🏢 " + companyName;
+                        if (metaEl) metaEl.innerText = "评估基准日：" + baseDate + " | 产权持有单位：" + companyName;
                       }
                       setTimeout(() => { metaStatus.style.display = 'none'; }, 3500);
                     } else {
@@ -1437,7 +1440,7 @@ class WifiTransferServer(
                   status.style.color = '#60a5fa';
                   status.style.borderColor = '#2563eb';
                   status.style.display = 'block';
-                  status.innerText = "正在生成 ZIP 压缩包，需要一些时间，请稍等...";
+                  status.innerText = "正在生成项目资料包，请稍候。";
 
                   fetch('/api/prepare-zip?projectId=' + encodeURIComponent(sel.value))
                     .then(r => r.json())
@@ -1445,8 +1448,8 @@ class WifiTransferServer(
                       if (data.success) {
                         status.className = 'status-box active status-success';
                         status.style.display = 'block';
-                        status.innerHTML = "ZIP 压缩整包生成成功。(大小: " + (data.size / 1024 / 1024).toFixed(2) + " MB)<br>" +
-                                           "<a href='/download-zip?projectId=" + encodeURIComponent(sel.value) + "' style='display: inline-block; margin-top: 12px; background-color: #10b981; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: bold; border: 1px solid #059669; transition: background-color 0.2s;'>下载 ZIP 压缩包 (内含分类盘点表及点检报告)</a>";
+                        status.innerHTML = "项目资料包已生成。(大小: " + (data.size / 1024 / 1024).toFixed(2) + " MB)<br>" +
+                                           "<a href='/download-zip?projectId=" + encodeURIComponent(sel.value) + "' style='display: inline-block; margin-top: 12px; background-color: #10b981; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: bold; border: 1px solid #059669; transition: background-color 0.2s;'>下载项目资料包（含分类盘点表及资产记录 PDF）</a>";
                       } else {
                         status.className = 'status-box active status-error';
                         status.style.display = 'block';
@@ -1456,7 +1459,7 @@ class WifiTransferServer(
                     .catch(e => {
                       status.className = 'status-box active status-error';
                       status.style.display = 'block';
-                      status.innerText = "建立局域网连接超时，生成失败。";
+                      status.innerText = "局域网连接超时，项目资料包生成失败。";
                     });
                 }
 
@@ -1501,7 +1504,7 @@ class WifiTransferServer(
                   status.style.color = '#60a5fa';
                   status.style.borderColor = '#2563eb';
                   status.style.display = 'block';
-                  status.innerText = "正在传输并解析 [" + file.name + "] 中，请稍候...";
+                  status.innerText = "正在上传并解析 [" + file.name + "]，请稍候。";
 
                   fetch('/upload?projectId=' + encodeURIComponent(sel.value) + '&mode=' + mode + '&filename=' + encodeURIComponent(file.name), {
                     method: 'POST',
@@ -1511,8 +1514,8 @@ class WifiTransferServer(
                   .then(data => {
                     if (data.success) {
                       status.className = 'status-box active status-success';
-                      const modeText = mode === 'replace' ? '替换并刷新' : '成功追加';
-                      status.innerText = "导入成功！已" + modeText + " " + data.count + " 条资产记录。手机App的盘点列表已同步更新。";
+                      const modeText = mode === 'replace' ? '替换' : '追加';
+                      status.innerText = "资产台账已导入，" + modeText + " " + data.count + " 条资产记录。手机端盘点列表已同步更新。";
                     } else {
                       status.className = 'status-box active status-error';
                       status.innerText = "导入失败: " + data.error;
@@ -1520,7 +1523,7 @@ class WifiTransferServer(
                   })
                   .catch(e => {
                     status.className = 'status-box active status-error';
-                    status.innerText = "网络传输失败，请确保设备与电脑连接在完全相同的局域网。";
+                    status.innerText = "网络传输失败，请确认手机与电脑处于同一局域网。";
                   });
                 }
 

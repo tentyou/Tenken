@@ -13,10 +13,9 @@ data class StockItem(
     val location: String = "",
     val originalCode: String = "",
     val photoCount: Int = 0,
-    val pdfStatus: String = "未生成", // "未生成" / "已生成"
-    val projectId: String = "default_project",
+    val pdfStatus: String = InventoryConstants.PDF_STATUS_PENDING,
+    val projectId: String = InventoryConstants.DEFAULT_PROJECT_ID,
     val shouldCheck: Boolean = true,
     val originalRowJson: String = "",
     val rowOrder: Int = 0
 )
-
