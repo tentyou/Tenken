@@ -16,8 +16,6 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
-import java.util.UUID
 
 class StockViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -452,77 +450,9 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Programmatically generates a simulated physical asset photo with a detailed overlay
-     */
-    fun simulateCapture(item: StockItem) {
+    fun updateItems(items: List<StockItem>) {
         viewModelScope.launch(Dispatchers.IO) {
-            val targetFile = File(
-                context.filesDir,
-                "photos/${item.uid}/photo_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(5)}.jpg"
-            )
-            targetFile.parentFile?.mkdirs()
-
-            try {
-                val bitmap = android.graphics.Bitmap.createBitmap(1080, 1080, android.graphics.Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(bitmap)
-                val paint = android.graphics.Paint()
-
-                // Draw solid background container with elegant slate-blue colors
-                paint.color = 0xFF1E293B.toInt()
-                canvas.drawRect(0f, 0f, 1080f, 1080f, paint)
-
-                // High-contrast warning safety lines
-                paint.color = 0xFF3B82F6.toInt() // Slate blue
-                canvas.drawRect(40f, 40f, 1040f, 60f, paint)
-                canvas.drawRect(40f, 1020f, 1040f, 1040f, paint)
-
-                paint.color = android.graphics.Color.WHITE
-                paint.color = android.graphics.Color.WHITE
-                paint.textSize = 46f
-                paint.isAntiAlias = true
-
-                canvas.drawText("【资产现场核验记录】", 80f, 180f, paint)
-
-                paint.textSize = 36f
-                paint.color = 0xFF94A3B8.toInt()
-                canvas.drawText("核验状态: 已生成模拟记录", 80f, 260f, paint)
-
-                paint.color = android.graphics.Color.WHITE
-                paint.textSize = 42f
-                canvas.drawText("资产名称: ${item.name}", 80f, 380f, paint)
-                canvas.drawText("资产编号: ${item.originalCode}", 80f, 460f, paint)
-                canvas.drawText("存放位置: ${item.location}", 80f, 540f, paint)
-                canvas.drawText("资产分类: ${item.category}", 80f, 620f, paint)
-
-                paint.color = 0xFFF59E0B.toInt() // Amber accent code info
-                paint.textSize = 34f
-                canvas.drawText("记录编号: ${item.uid}", 80f, 740f, paint)
-
-                paint.textSize = 32f
-                paint.color = 0xFF10B981.toInt() // Emerald accent time format
-                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault())
-                val timestampStr = sdf.format(java.util.Date())
-                canvas.drawText("记录生成时间: $timestampStr", 80f, 820f, paint)
-
-                paint.textSize = 28f
-                paint.color = 0xFF64748B.toInt()
-                canvas.drawText("模拟照片记录", 80f, 920f, paint)
-
-                FileOutputStream(targetFile).use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
-                }
-                bitmap.recycle()
-
-                // Save physical EXIF metadata to the mock capture!
-                com.example.util.PhotoMetadataUtils.writePhysicalMetadata(context, targetFile, item)
-
-                withContext(Dispatchers.Main) {
-                    refreshActiveSessionPhotos(item.uid)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            repository.insertAll(items)
         }
     }
 
@@ -727,14 +657,29 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            val headers = listOf("序号", "设备编号", "设备名称", "资产分类", "规格型号", "生产厂家", "计量单位", "数量", "存放位置", "购置日期", "启用日期", "账面原值", "账面净值", "是否盘点", "备注", "UUID")
+            val headers = listOf(
+                "序号",
+                "设备编号",
+                "设备名称",
+                "资产分类",
+                "规格型号",
+                "生产厂家",
+                "计量单位",
+                "数量",
+                "存放位置",
+                "购置日期",
+                "启用日期",
+                "账面原值",
+                "账面净值",
+                "是否盘点",
+                "备注",
+                "UUID"
+            )
             val headersJson = repository.toJsonList(headers)
 
             val proj = repository.getProjectById(pid)
             if (proj != null && proj.columnHeadersJson.isEmpty()) {
-                repository.insertProject(proj.copy(
-                    columnHeadersJson = headersJson
-                ))
+                repository.insertProject(proj.copy(columnHeadersJson = headersJson))
             }
 
             val samples = listOf(
@@ -755,7 +700,7 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                     originalCode = "HPC-DELL-12",
                     projectId = pid,
                     shouldCheck = true,
-                    originalRowJson = repository.toJsonList(listOf("2", "HPC-DELL-12", "戴尔超算物理刀片服务器", "电子设备类", "PowerEdge MX750c", "戴尔中国", "精", "1", "3号算力机房14架", "2024-01", "2024-02", "320000.00", "260000.00", "是", "核心科学计算", "")),
+                    originalRowJson = repository.toJsonList(listOf("2", "HPC-DELL-12", "戴尔超算物理刀片服务器", "电子设备类", "PowerEdge MX750c", "戴尔中国", "台", "1", "3号算力机房14架", "2024-01", "2024-02", "320000.00", "260000.00", "是", "核心科学计算", "")),
                     rowOrder = 2
                 ),
                 StockItem(
@@ -765,17 +710,17 @@ class StockViewModel(application: Application) : AndroidViewModel(application) {
                     originalCode = "BLDG-HQ-01",
                     projectId = pid,
                     shouldCheck = false,
-                    originalRowJson = repository.toJsonList(listOf("3", "BLDG-HQ-01", "研发总装中心主厂房", "房屋建筑物类", "钢混框架架构(地上三层)", "中铁建设", "栋", "1", "园区西北角一号地", "2018-06", "2018-12", "45000000.00", "38000000.00", "否", "资产自用红线内", "")),
+                    originalRowJson = repository.toJsonList(listOf("3", "BLDG-HQ-01", "研发总装中心主厂房", "房屋建筑物类", "钢混框架结构（地上三层）", "中铁建设", "栋", "1", "园区西北角一号地", "2018-06", "2018-12", "45000000.00", "38000000.00", "否", "资产自用红线内", "")),
                     rowOrder = 3
                 ),
                 StockItem(
-                    name = "特斯拉一秒干线物流重卡",
+                    name = "干线物流新能源重卡",
                     category = "运输设备类",
                     location = "园区物流调度室C区",
                     originalCode = "EV-SEMI-05",
                     projectId = pid,
                     shouldCheck = true,
-                    originalRowJson = repository.toJsonList(listOf("4", "EV-SEMI-05", "特斯拉一秒干线物流重卡", "运输设备类", "Semi Type-Class 8", "特斯拉", "辆", "1", "园区物流调度室C区", "2023-08", "2023-09", "1200000.00", "980000.00", "是", "干线低碳干线运输", "")),
+                    originalRowJson = repository.toJsonList(listOf("4", "EV-SEMI-05", "干线物流新能源重卡", "运输设备类", "重型半挂牵引车", "整车制造商", "辆", "1", "园区物流调度室C区", "2023-08", "2023-09", "1200000.00", "980000.00", "是", "干线运输资产", "")),
                     rowOrder = 4
                 )
             )

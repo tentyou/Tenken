@@ -63,7 +63,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.InventoryConstants
+import com.example.data.InventorySampling
 import com.example.data.InventoryTemplate
+import com.example.data.SamplingMethod
 import com.example.data.StockItem
 import com.example.ui.StockViewModel
 import com.example.ui.theme.MyApplicationTheme
@@ -138,6 +140,19 @@ fun DashboardScreen(viewModel: StockViewModel) {
     var showEditMetaDialog by remember { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
     var showWatermarkSettingsPage by remember { mutableStateOf(false) }
+    var showSamplingDialog by remember { mutableStateOf(false) }
+    var selectedSamplingCategory by remember { mutableStateOf("") }
+    var selectedSamplingMethod by remember { mutableStateOf(SamplingMethod.ORIGINAL_VALUE_TOP_N) }
+    var samplingPresetCount by remember { mutableStateOf<Int?>(10) }
+    var customSamplingCount by remember { mutableStateOf("") }
+    var samplingTargetRatio by remember { mutableStateOf("70") }
+    var samplingResultMessage by remember { mutableStateOf<String?>(null) }
+    val samplingCategories = remember(stockItems) { InventorySampling.categories(stockItems) }
+    LaunchedEffect(samplingCategories) {
+        if (selectedSamplingCategory !in samplingCategories) {
+            selectedSamplingCategory = samplingCategories.firstOrNull().orEmpty()
+        }
+    }
 
     // Drawer state configuration
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -313,7 +328,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                             if (success) {
                                 Toast.makeText(context, "资产台账已导入。", Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(context, "导入失败，请核对模板表头及是否盘点列。", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "导入失败，请核对表头，并确认每项资产均填写设备名称和资产分类。", Toast.LENGTH_LONG).show()
                             }
                         }
                         pendingImportUri = null
@@ -325,6 +340,162 @@ fun DashboardScreen(viewModel: StockViewModel) {
             dismissButton = {
                 TextButton(onClick = { pendingImportUri = null }) {
                     Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showSamplingDialog) {
+        AlertDialog(
+            onDismissRequest = { showSamplingDialog = false },
+            title = { Text("抽样盘点设置", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "请选择设备分类，并在该分类内执行抽样。抽样结果只替换所选分类内的待盘点状态，其他分类保持不变。",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("设备分类", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        if (samplingCategories.isEmpty()) {
+                            Text("当前项目暂无可抽样分类。", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        } else {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(samplingCategories) { category ->
+                                    FilterChip(
+                                        selected = selectedSamplingCategory == category,
+                                        onClick = { selectedSamplingCategory = category },
+                                        label = { Text(category, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("抽样方式", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        InventorySampling.methods.forEach { method ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedSamplingMethod = method }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = selectedSamplingMethod == method,
+                                    onClick = { selectedSamplingMethod = method }
+                                )
+                                Text(method.displayName, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    if (selectedSamplingMethod.requiresCount) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(10, 50, 100).forEach { count ->
+                                FilterChip(
+                                    selected = samplingPresetCount == count,
+                                    onClick = {
+                                        samplingPresetCount = count
+                                        customSamplingCount = ""
+                                    },
+                                    label = { Text("${count}项") }
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            value = customSamplingCount,
+                            onValueChange = { input ->
+                                customSamplingCount = input.filter { it.isDigit() }.take(6)
+                                samplingPresetCount = null
+                            },
+                            label = { Text("自定义数量") },
+                            placeholder = { Text("输入抽样项数") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (selectedSamplingMethod.requiresRatio) {
+                        OutlinedTextField(
+                            value = samplingTargetRatio,
+                            onValueChange = { input ->
+                                samplingTargetRatio = input.filter { it.isDigit() || it == '.' }.take(6)
+                            },
+                            label = { Text("目标占比（%）") },
+                            placeholder = { Text("如：70") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    Text(
+                        text = "当前台账共 ${stockItems.size} 项，所选分类共 ${stockItems.count { it.category.trim() == selectedSamplingCategory }} 项。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (stockItems.isEmpty() || selectedSamplingCategory.isBlank()) {
+                            Toast.makeText(context, "当前项目暂无可抽样资产分类。", Toast.LENGTH_SHORT).show()
+                            showSamplingDialog = false
+                            return@Button
+                        }
+                        val requestedCount = if (selectedSamplingMethod.requiresCount) {
+                            samplingPresetCount ?: customSamplingCount.toIntOrNull() ?: 0
+                        } else {
+                            0
+                        }
+                        if (selectedSamplingMethod.requiresCount && requestedCount <= 0) {
+                            Toast.makeText(context, "请输入有效的抽样数量。", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        val targetRatio = samplingTargetRatio.toDoubleOrNull() ?: 0.0
+                        if (selectedSamplingMethod.requiresRatio && targetRatio <= 0.0) {
+                            Toast.makeText(context, "请输入有效的目标占比。", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        val result = InventorySampling.sample(
+                            allItems = stockItems,
+                            columnHeadersJson = currentTemplateHeadersJson,
+                            category = selectedSamplingCategory,
+                            method = selectedSamplingMethod,
+                            requestedCount = requestedCount,
+                            targetRatioPercent = targetRatio
+                        )
+                        viewModel.updateItems(InventorySampling.applyResultToSelectedCategory(stockItems, result))
+                        samplingResultMessage = result.summaryText()
+                        showSamplingDialog = false
+                    }
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSamplingDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (samplingResultMessage != null) {
+        AlertDialog(
+            onDismissRequest = { samplingResultMessage = null },
+            title = { Text("抽样结果", fontWeight = FontWeight.Bold) },
+            text = { Text(samplingResultMessage.orEmpty()) },
+            confirmButton = {
+                Button(onClick = { samplingResultMessage = null }) {
+                    Text("确认")
                 }
             }
         )
@@ -1047,22 +1218,68 @@ fun DashboardScreen(viewModel: StockViewModel) {
 
                     if (activeTab == 1) {
                         item {
+                            val allChecked = totalCount > 0 && checkedCount == totalCount
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "台账预览 (${checkedCount}项/${totalCount}项)",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                                Text(
-                                    text = "勾选即纳入盘点",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray
-                                )
+                                Column {
+                                    Text(
+                                        text = "台账预览 (${checkedCount}项/${totalCount}项)",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    Text(
+                                        text = "勾选即纳入盘点",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray
+                                    )
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.clickable(enabled = totalCount > 0) {
+                                            val targetState = !allChecked
+                                            viewModel.updateItems(stockItems.map { it.copy(shouldCheck = targetState) })
+                                        }
+                                    ) {
+                                        Checkbox(
+                                            checked = allChecked,
+                                            enabled = totalCount > 0,
+                                            onCheckedChange = { targetState ->
+                                                viewModel.updateItems(stockItems.map { it.copy(shouldCheck = targetState) })
+                                            },
+                                            modifier = Modifier.testTag("select_all_preview_checkbox")
+                                        )
+                                        Text(
+                                            text = "全选",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = { showSamplingDialog = true },
+                                        enabled = totalCount > 0,
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .testTag("sampling_button"),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Rule,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("抽样", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                         }
@@ -1070,8 +1287,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                         if (stockItems.isEmpty()) {
                             item {
                                 EmptyStateView(
-                                    onImportClick = { documentImportLauncher.launch(arrayOf("*/*")) },
-                                    onSampleClick = { viewModel.importSampleData() }
+                                    onImportClick = { documentImportLauncher.launch(arrayOf("*/*")) }
                                 )
                             }
                         } else {
@@ -1113,7 +1329,11 @@ fun DashboardScreen(viewModel: StockViewModel) {
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
-                                            CollapsibleMetadataSection(item = item, modifier = Modifier.padding(top = 2.dp))
+                                            CollapsibleMetadataSection(
+                                                item = item,
+                                                columnHeadersJson = currentTemplateHeadersJson,
+                                                modifier = Modifier.padding(top = 2.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -1178,6 +1398,7 @@ fun DashboardScreen(viewModel: StockViewModel) {
                             items(mainCheckList, key = { it.uid }) { item ->
                                 StockItemRow(
                                     item = item,
+                                    columnHeadersJson = currentTemplateHeadersJson,
                                     onCameraClick = { viewModel.startPhotoCapture(item) },
                                     onPdfClick = { viewModel.manualGeneratePdf(item) },
                                     onDeletePdfClick = { viewModel.deleteItemPdf(item) }
@@ -1895,8 +2116,8 @@ fun TutorialGuideCard(
                 Row(verticalAlignment = Alignment.Top) {
                     Text("1. ", style = MaterialTheme.typography.bodyMedium)
                     Column {
-                        Text("点击下方按钮「加载示范数据」", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text("或通过右上角导入您自己的台账 Excel 清单文件。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        Text("导入资产台账 Excel 清单文件", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text("也可先加载示例数据熟悉盘点流程。", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
                 }
                 Row(verticalAlignment = Alignment.Top) {
@@ -1946,7 +2167,7 @@ fun TutorialGuideCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("加载示范数据", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("加载示例数据", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 OutlinedButton(
@@ -2018,6 +2239,7 @@ fun StatsCategoryCard(
 @Composable
 fun StockItemRow(
     item: StockItem,
+    columnHeadersJson: String?,
     onCameraClick: () -> Unit,
     onPdfClick: () -> Unit,
     onDeletePdfClick: () -> Unit
@@ -2272,15 +2494,10 @@ fun StockItemRow(
                         .padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    val itemsToDisplay = listOf(
-                        Pair("设备编号", item.originalCode),
-                        Pair("资产分类", item.category),
-                        Pair("存放位置", item.location),
-                        Pair("设备 UID", item.uid)
-                    )
+                    val itemsToDisplay = InventorySampling.metadataPairs(item, columnHeadersJson)
 
                     itemsToDisplay.forEach { (label, value) ->
-                        val displayValue = value.ifEmpty { "无" }
+                        val displayValue = value.trim()
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2321,8 +2538,7 @@ fun StockItemRow(
 
 @Composable
 fun EmptyStateView(
-    onImportClick: () -> Unit,
-    onSampleClick: () -> Unit
+    onImportClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -2734,34 +2950,6 @@ fun CameraPreviewWidget(viewModel: StockViewModel, activeItem: StockItem) {
                     color = Color.LightGray.copy(alpha = 0.8f)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        viewModel.simulateCapture(activeItem)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .testTag("simulate_capture_button")
-                        .height(32.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.FlashOn, 
-                        contentDescription = null, 
-                        modifier = Modifier.size(14.dp),
-                        tint = Color.Yellow
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "生成模拟现场照片记录", 
-                        fontSize = 11.sp, 
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
             }
 
             // Part B: Large physical-shutter buttons
@@ -2944,17 +3132,17 @@ fun DocumentEnhancingDialog(
 
                     // Top Right Serial Overlay
                     if (watermarkEnabled && watermarkTrEnabled) {
+                        val topRightPadding = 10.dp
+                        val sampleTextSize = 10.sp
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(8.dp)
-                                .background(Color.Red, RoundedCornerShape(2.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .padding(topRightPadding)
                         ) {
                             Text(
                                 text = watermarkText,
-                                color = Color.White,
-                                fontSize = 9.sp,
+                                color = Color.Red,
+                                fontSize = sampleTextSize,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -2966,7 +3154,7 @@ fun DocumentEnhancingDialog(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
                                 .padding(8.dp)
-                                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                                .background(Color.Black.copy(alpha = 0.4f))
                                 .padding(6.dp)
                         ) {
                             if (showDate) {
@@ -3575,16 +3763,17 @@ fun WatermarkSettingsPage(
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .padding(8.dp)
-                                    .background(Color.Red, RoundedCornerShape(2.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .padding(
+                                        horizontal = 14.dp,
+                                        vertical = 12.dp
+                                    )
                             ) {
                                 val sampleCategory = stockItems.firstOrNull()?.category ?: "默认分类"
                                 val prefix = viewModel.getCategoryPrefix(sampleCategory).ifEmpty { "C-1" }
                                 Text(
                                     text = "$prefix-0001",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
+                                    color = Color.Red,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -3596,7 +3785,7 @@ fun WatermarkSettingsPage(
                                 modifier = Modifier
                                     .align(Alignment.BottomStart)
                                     .padding(10.dp)
-                                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+                                    .background(Color.Black.copy(alpha = 0.4f))
                                     .padding(6.dp)
                             ) {
                                 if (showDate) {
@@ -3813,6 +4002,7 @@ fun PdfPreviewDialog(
 @Composable
 fun CollapsibleMetadataSection(
     item: com.example.data.StockItem,
+    columnHeadersJson: String?,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -3852,15 +4042,10 @@ fun CollapsibleMetadataSection(
                     .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                val itemsToDisplay = listOf(
-                    Pair("设备编号", item.originalCode),
-                    Pair("资产分类", item.category),
-                    Pair("存放位置", item.location),
-                    Pair("设备 UID", item.uid)
-                )
+                val itemsToDisplay = InventorySampling.metadataPairs(item, columnHeadersJson)
 
                 itemsToDisplay.forEach { (label, value) ->
-                    val displayValue = value.ifEmpty { "无" }
+                    val displayValue = value.trim()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

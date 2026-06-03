@@ -28,7 +28,7 @@ class GreetingScreenshotTest {
     composeTestRule.setContent { 
       MyApplicationTheme { 
         Surface {
-          EmptyStateView(onImportClick = {}, onSampleClick = {})
+          EmptyStateView(onImportClick = {})
         }
       } 
     }
