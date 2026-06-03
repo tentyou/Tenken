@@ -523,10 +523,10 @@ class StockRepository(
                     val cells = parseCsvLine(line)
                     if (cells.isEmpty()) continue
 
-                    val itemCode = if (codeIdx >= 0 && codeIdx < cells.size) cells[codeIdx] else "C_${1000 + i}"
+                    val itemCode = cells.getOrNull(codeIdx)?.trim().orEmpty()
                     val itemName = cells.getOrNull(nameIdx)?.trim().orEmpty()
                     val itemCat = cells.getOrNull(categoryIdx)?.trim().orEmpty()
-                    val itemLoc = if (locationIdx >= 0 && locationIdx < cells.size) cells[locationIdx] else "默认区域"
+                    val itemLoc = cells.getOrNull(locationIdx)?.trim().orEmpty()
 
                     val shouldCheckStr = if (shouldCheckIdx >= 0 && shouldCheckIdx < cells.size) cells[shouldCheckIdx] else "true"
                     val isCheck = !(shouldCheckStr.lowercase() == "false" || shouldCheckStr == "否" || shouldCheckStr == "0")
@@ -723,10 +723,10 @@ class StockRepository(
                     continue
                 }
 
-                val itemCode = rCells.getOrNull(codeColIdx)?.trim()?.ifEmpty { "E_${1000 + rowIdx}" } ?: "E_${1000 + rowIdx}"
+                val itemCode = rCells.getOrNull(codeColIdx)?.trim().orEmpty()
                 val itemName = rCells.getOrNull(nameColIdx)?.trim().orEmpty()
                 val itemCat = rCells.getOrNull(categoryColIdx)?.trim().orEmpty()
-                val itemLoc = rCells.getOrNull(locationColIdx)?.trim()?.ifEmpty { "默认区域" } ?: "默认区域"
+                val itemLoc = rCells.getOrNull(locationColIdx)?.trim().orEmpty()
 
                 if (itemName.isBlank() || itemCat.isBlank()) return@withContext false
 
