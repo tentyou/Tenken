@@ -1,0 +1,6 @@
+{
+  "name": "点检",
+  "description": "专业的高效盘点辅助工具：支持导入 CSV 文件列表、自动生成 UUID、提供流畅的单/多张连续拍照、自动生成对应盘点对象的合并 PDF 文件，最后支持一键打包导出为结构规范的 ZIP 盘点档案包。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
